@@ -1,0 +1,1 @@
+{"chunking": {"avg": 65536, "max": 262144, "min": 16384}, "compression": "zstd", "digest": "md5", "formatVersion": 1, "size": 1935008}

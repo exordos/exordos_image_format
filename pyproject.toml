@@ -1,0 +1,69 @@
+[project]
+name = "exordos-image-format"
+description = "Exordos chunked disk image format: specification, reference implementation and conformance vectors"
+readme = "README.md"
+authors = [{name = "Genesis Corporation", email = "anton.kremenetsky@gmail.com"}]
+dynamic = ["version"]
+license = {text = "Apache-2.0"}
+requires-python = ">=3.14"
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+]
+
+[project.urls]
+homepage = "https://github.com/exordos/exordos_image_format/"
+
+[build-system]
+requires = [
+    "setuptools>=75.3.3",
+    "setuptools_scm>=8"
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0,<9.0.0",  # MIT
+]
+ruff = [
+    "ruff",  # MIT
+]
+
+[project.scripts]
+exordos-image-format = "exordos_image_format.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["exordos_image_format*"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
+known-first-party = ["exordos_image_format"]
+combine-as-imports = false
+force-sort-within-sections = true
+order-by-type = true
+split-on-trailing-comma = true
+force-single-line = true

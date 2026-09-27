@@ -1,0 +1,254 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "v1",
+      "description": "An image without references",
+      "sidecar": "repo/v1/1.0.0/images/disk.oci.json",
+      "valid": true,
+      "size": 1935008,
+      "sha256": "b26278abac7f83112e33a7dbf54649bae62586bf731fd0516422358aa6e14c53",
+      "chunks": 12,
+      "zeroChunks": 2,
+      "packs": 3
+    },
+    {
+      "name": "v2",
+      "description": "The next release: reuses the packs of v1 and adds new ones",
+      "sidecar": "repo/v2/1.0.0/images/disk.oci.json",
+      "valid": true,
+      "size": 2021024,
+      "sha256": "36c6cb2bb786e01c994596be1134e7413c8cb8237831e9e8944afdbecd36c9d2",
+      "chunks": 12,
+      "zeroChunks": 2,
+      "packs": 4
+    },
+    {
+      "name": "sha512-256",
+      "description": "The image of v1 with SHA-512/256 chunk IDs",
+      "sidecar": "repo/sha512-256/1.0.0/images/disk.oci.json",
+      "valid": true,
+      "size": 1935008,
+      "sha256": "b26278abac7f83112e33a7dbf54649bae62586bf731fd0516422358aa6e14c53",
+      "chunks": 12,
+      "zeroChunks": 2,
+      "packs": 3
+    },
+    {
+      "name": "not-a-disk-image",
+      "description": "Wrong artifactType",
+      "sidecar": "repo/not-a-disk-image/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "not-a-disk-image"
+    },
+    {
+      "name": "no-blob-store",
+      "description": "A sidecar without the com.exordos.disk.blobs annotation",
+      "sidecar": "repo/no-blob-store/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "no-blob-store"
+    },
+    {
+      "name": "layers-swapped",
+      "description": "Pack map before the index",
+      "sidecar": "repo/layers-swapped/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-layers"
+    },
+    {
+      "name": "unreferenced-pack",
+      "description": "A pack that no pack map entry refers to",
+      "sidecar": "repo/unreferenced-pack/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-layers"
+    },
+    {
+      "name": "blob-size",
+      "description": "The config descriptor size is off by one",
+      "sidecar": "repo/blob-size/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "blob-mismatch"
+    },
+    {
+      "name": "blob-digest",
+      "description": "Blob does not match the digest",
+      "sidecar": "repo/blob-digest/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "blob-mismatch"
+    },
+    {
+      "name": "format-version",
+      "description": "formatVersion 2",
+      "sidecar": "repo/format-version/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "unsupported-version"
+    },
+    {
+      "name": "config-digest",
+      "description": "Unknown digest",
+      "sidecar": "repo/config-digest/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-config"
+    },
+    {
+      "name": "config-compression",
+      "description": "Unknown compression",
+      "sidecar": "repo/config-compression/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-config"
+    },
+    {
+      "name": "chunking-mismatch",
+      "description": "Config and index chunk sizes differ",
+      "sidecar": "repo/chunking-mismatch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
+    },
+    {
+      "name": "digest-mismatch",
+      "description": "Config and index digests differ",
+      "sidecar": "repo/digest-mismatch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
+    },
+    {
+      "name": "size-mismatch",
+      "description": "config.size is not the end of the last chunk",
+      "sidecar": "repo/size-mismatch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
+    },
+    {
+      "name": "index-tail",
+      "description": "Corrupt table tail marker",
+      "sidecar": "repo/index-tail/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-index"
+    },
+    {
+      "name": "index-truncated",
+      "description": "An index cut in the middle of an entry",
+      "sidecar": "repo/index-truncated/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-index"
+    },
+    {
+      "name": "packmap-magic",
+      "description": "Wrong pack map magic",
+      "sidecar": "repo/packmap-magic/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-count",
+      "description": "entry_count does not match the entries",
+      "sidecar": "repo/packmap-count/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-uncompressed",
+      "description": "A pack map that is not zstd-compressed",
+      "sidecar": "repo/packmap-uncompressed/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-short",
+      "description": "A pack map with one entry less than the index",
+      "sidecar": "repo/packmap-short/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
+    },
+    {
+      "name": "packmap-layer",
+      "description": "An entry refers to layer 1",
+      "sidecar": "repo/packmap-layer/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-no-layer",
+      "description": "An entry refers to a layer past the end",
+      "sidecar": "repo/packmap-no-layer/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-range",
+      "description": "A range that ends past the end of the pack",
+      "sidecar": "repo/packmap-range/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-zero-range",
+      "description": "A zero entry with a length",
+      "sidecar": "repo/packmap-zero-range/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "packmap-repeated",
+      "description": "A repeated chunk ID with two different ranges",
+      "sidecar": "repo/packmap-repeated/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-packmap"
+    },
+    {
+      "name": "false-zero",
+      "description": "A data chunk marked as a zero chunk",
+      "sidecar": "repo/false-zero/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "chunk-mismatch"
+    },
+    {
+      "name": "wrong-range",
+      "description": "A chunk points to the range of another chunk",
+      "sidecar": "repo/wrong-range/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "read",
+      "error": "chunk-mismatch"
+    },
+    {
+      "name": "tampered-pack",
+      "description": "A pack with a changed byte, listed under its new digest",
+      "sidecar": "repo/tampered-pack/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "read",
+      "error": "chunk-mismatch"
+    },
+    {
+      "name": "two-frames",
+      "description": "A chunk stored as two zstd frames",
+      "sidecar": "repo/two-frames/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "read",
+      "error": "chunk-mismatch"
+    }
+  ]
+}
