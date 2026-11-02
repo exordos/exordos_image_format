@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "artifactType": "application/vnd.exordos.disk.v1",
+  "config": {
+    "mediaType": "application/vnd.exordos.disk.config.v1+json",
+    "digest": "sha256:cd0fa6337fba724c244e40d6477855fcd79481edb4066cca0ee34e335a1f2987",
+    "size": 619
+  },
+  "subject": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:47283425a1298662ddd39c1ac4e6509dd78aa56f7ec7659d802cbd17385fa185",
+    "size": 482
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.exordos.disk.index.v1",
+      "digest": "sha256:0b27f8731902cd8d298bdecf6002fe4800e9b25ab5d712c9e8df04626dd7876c",
+      "size": 584
+    },
+    {
+      "mediaType": "application/vnd.exordos.disk.packmap.v1+zstd",
+      "digest": "sha256:06b294edb20298a255a5c019a1ac1750f27d73cd2908f214e6813ff00de89ddd",
+      "size": 94
+    },
+    {
+      "mediaType": "application/vnd.exordos.disk.pack.v1",
+      "digest": "sha256:997e087fbe74f73d7169d0e8660027162aa9882d927eff861d8cd702db2a3dac",
+      "size": 95244
+    },
+    {
+      "mediaType": "application/vnd.exordos.disk.pack.v1",
+      "digest": "sha256:6324c16c783f516937eeff4332e1927c0db42d020160fe25415c49d9a31542f3",
+      "size": 135764
+    },
+    {
+      "mediaType": "application/vnd.exordos.disk.pack.v1",
+      "digest": "sha256:c31024d3345cc7b6bdbca23d2b0af27ae5b4a682b628b8a53ca46380084f6e05",
+      "size": 65992
+    },
+    {
+      "mediaType": "application/vnd.exordos.disk.pack.v1",
+      "digest": "sha256:5705b71ee7388b3a9c38030c18c5714a8cb2f299aed7bbd8f0a378a7d97de303",
+      "size": 81585
+    }
+  ],
+  "annotations": {
+    "org.opencontainers.image.title": "disk",
+    "org.opencontainers.image.version": "v2",
+    "com.exordos.disk.blobs": "../../../blobs/"
+  }
+}

@@ -2,49 +2,32 @@
 
 Version: **1** (draft).
 
-This document specifies how a raw disk image is stored as content-defined chunks
-packed into OCI blobs, and what a reader must check before it writes such an
-image to a disk. The rationale, measurements and the integration with the
-Exordos builder and Seed OS are described in the `exordos` repository,
-`docs/disk-image-format.md`.
+The key words MUST, MUST NOT, SHOULD and MAY express requirements on an implementation.
 
-The key words MUST, MUST NOT, SHOULD and MAY are to be interpreted as described
-in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+## Identity and layout
 
-## Standards it builds on
+An image has an immutable **content manifest**, containing its content config
+and ordered chunk index. Its **image ID** is the SHA-256 digest of the exact
+content manifest bytes. Names, release versions, repository addresses, epochs,
+compression levels and build references MUST NOT be included in this manifest
+or its content config. Repacking MUST preserve these objects and the image ID.
 
-The format reuses existing formats wherever possible:
+This is the identity of a particular chunked representation. Rechunking the same
+raw bytes may produce a different image ID.
 
-- The manifest is an [OCI image manifest](https://github.com/opencontainers/image-spec/blob/main/manifest.md)
-  (image-spec 1.1) with an `artifactType`. Blobs are addressed by `sha256`
-  digests, and `org.opencontainers.image.*` annotations are used as defined
-  there. The blob directory of a static repository follows the
-  [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md)
-  (`blobs/sha256/<hex>`).
-- The chunk index is a [casync](https://github.com/systemd/casync) blob index
-  (`.caibx`), as written by casync and [desync](https://github.com/folbricht/desync).
-- A compressed chunk is a [zstd frame](https://www.rfc-editor.org/rfc/rfc8878),
-  byte for byte the content of a casync `.cacnk` chunk file.
+A separate immutable **layout manifest** contains the pack map and the packs
+needed to reconstruct the image. An **epoch** identifies a layout generation
+within `(repositoryId, image ID)`. Epoch numbers are positive integers no larger
+than `2^64 - 1`; booleans, floats and strings are invalid. Numbers MUST
+increase and MUST NOT be reused. Gaps are allowed. The same image can have
+different epochs in different repositories.
 
-Defined here: the pack, the pack map, the config, the rules that tie them to
-the manifest, and how static repositories and registries hold them.
+`repositoryId` is a persistent repository instance UUID in canonical lowercase
+hyphenated form. It is an identity, not a URL. Restoring an older administrative
+catalog MUST preserve allocated epoch numbers or establish a new repository ID.
 
-## Overview
-
-```text
-manifest (artifactType application/vnd.exordos.disk.v1)
-├── config      image size, chunking parameters, digest algorithm
-├── layers[0]   index      (.caibx: chunk end offsets and chunk IDs)
-├── layers[1]   pack map   (index entry i → layer, offset, length)
-└── layers[2..] packs      (compressed chunks, back to back)
-```
-
-A raw image of `size` bytes is split into chunks. The index lists them in disk
-order. Each chunk is either a *zero chunk*, stored nowhere, or a *data chunk*,
-stored once as a zstd frame in one of the packs. The pack map says which. Packs
-are immutable and shared between images, so a new version of an image lists
-the packs of the previous version that hold its unchanged chunks and adds new
-packs only for new chunks.
+The descriptor digest identifies the exact serialized layout. An epoch number
+alone is not a sufficient reference.
 
 ## Chunking
 
@@ -59,33 +42,200 @@ packs only for new chunks.
 
 Readers do not re-run the chunker. They rely on the index only.
 
-## Objects
+## Content manifest
 
-All integers in binary objects are little-endian.
+The manifest uses `application/vnd.oci.image.manifest.v1+json` and has
+`schemaVersion = 2`, `artifactType = application/vnd.exordos.disk.content.v1`,
+a content config descriptor and exactly one layer: the chunk index.
 
-### Config
+The config media type is
+`application/vnd.exordos.disk.content.config.v1+json`. Its fields are
+`formatVersion = 1`, `size`, `chunking` and `digest`, as described below. The
+index uses `application/vnd.exordos.disk.index.v1` and the binary encoding below.
+Content configs MUST NOT contain a compression field.
 
-Media type `application/vnd.exordos.disk.config.v1+json`. A JSON object:
+The content config is JSON:
 
 ```json
 {
-  "chunking": {"avg": 65536, "max": 262144, "min": 16384},
-  "compression": "zstd",
-  "digest": "sha256",
   "formatVersion": 1,
-  "size": 6442450944
+  "size": 6442450944,
+  "chunking": {"min": 16384, "avg": 65536, "max": 262144},
+  "digest": "sha256"
 }
 ```
 
-Field | Type | Description
---- | --- | ---
-`formatVersion` | integer | Version of this specification, `1`
-`size` | integer | Size of the raw image in bytes
-`chunking` | object | `min`, `avg`, `max` chunk sizes in bytes, integers
-`digest` | string | Chunk ID algorithm: `sha256` or `sha512-256`
-`compression` | string | Compression of chunks in packs: `zstd`
+`size` is a non-negative integer, chunk sizes are positive integers with
+`min <= avg <= max`, and `digest` is `sha256` or `sha512-256`. Booleans are
+not integers. Readers MUST ignore unknown config fields. Writers MUST keep
+release and placement metadata outside this config.
 
-Readers MUST ignore unknown fields.
+Readers MUST verify the content manifest against the expected image ID and
+verify its config and index before accepting a layout for it.
+
+## Layout manifest
+
+The manifest uses `application/vnd.oci.image.manifest.v1+json` and has
+`schemaVersion = 2` and `artifactType = application/vnd.exordos.disk.v1`.
+Its `subject` is the content manifest descriptor. Its layers are:
+
+- `layers[0]`: the exact index descriptor from the content manifest;
+- `layers[1]`: the pack map;
+- `layers[2..]`: each used pack once, with no unused packs.
+
+The pack and pack-map encodings and media types are specified below.
+In particular, pack-map layer numbers still start at 2. The repeated index
+descriptor references the same blob; it does not duplicate the index data.
+
+The layout config has media type
+`application/vnd.exordos.disk.config.v1+json` and contains:
+
+Field | Type | Meaning
+--- | --- | ---
+`formatVersion` | integer | `1`
+`repositoryId` | string | Repository instance owning this epoch
+`image` | string | SHA-256 digest of the content manifest
+`epoch` | integer | Epoch number in this repository for this image
+`compression` | string | `zstd`
+`references` | array | Exact source epochs used to build the image
+
+All fields are required. An image built without source images has
+`references = []`. Readers MUST ignore unknown config fields.
+
+The config image digest, subject descriptor and index descriptor MUST agree
+with the verified content manifest. Readers MUST perform the checks in the
+reading section for the index, pack
+map, zero chunks, ranges and decoded chunks, using the content config for size,
+chunking and chunk digests. Invalid epoch or reference metadata MUST be rejected
+before writing to the target.
+
+## Source image references
+
+A reference pins the **content image and the exact source layout epoch**, not
+a release name, mutable tag, current pointer or URL. Each entry is an object:
+
+Field | Type | Meaning
+--- | --- | ---
+`repositoryId` | string | Source repository instance UUID
+`image` | descriptor | Source content manifest
+`epoch` | integer | Source layout epoch number
+`layout` | descriptor | Exact source layout manifest
+
+Both descriptors MUST have
+`mediaType = application/vnd.oci.image.manifest.v1+json`,
+a `sha256:` digest with 64 lowercase hexadecimal digits, and an integer
+`size > 0`. Booleans are not integers for these fields. Repository IDs and
+epoch numbers follow the rules above. Unknown entry fields MUST be ignored.
+
+The following JSON is schematic: the descriptor digests and sizes illustrate
+the wire shape, not published objects.
+
+```json
+{
+  "formatVersion": 1,
+  "repositoryId": "72f39208-1bb8-4d20-b87d-2058ee1e7619",
+  "image": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "epoch": 1,
+  "compression": "zstd",
+  "references": [
+    {
+      "repositoryId": "72f39208-1bb8-4d20-b87d-2058ee1e7619",
+      "image": {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "size": 1234
+      },
+      "epoch": 7,
+      "layout": {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "size": 5678
+      }
+    }
+  ]
+}
+```
+
+### Writer rules
+
+1. A writer MUST use a verified snapshot of each source image and layout. The
+   snapshot's image ID, repository ID, epoch, subject and index MUST agree with
+   the reference. A mutable source pointer MUST be resolved once to this
+   snapshot; a later pointer value MUST NOT be substituted into the record.
+2. A newly built image MUST record each source epoch from which it actually
+   reused data. Reuse includes referencing existing compressed chunk ranges or
+   copying source chunks into new packs. A search candidate that contributed
+   no data MUST NOT appear in `references`.
+3. There MAY be multiple source images, repositories and source epochs. For
+   each `(repositoryId, image.digest, epoch)` there MUST be exactly one layout
+   digest and size. Duplicate entries and conflicting descriptors are invalid.
+   A content digest MUST NOT have conflicting descriptor sizes either.
+   Conversely, one layout digest MUST identify only one
+   `(repositoryId, image.digest, epoch)` tuple and one descriptor size.
+4. A source with the same repository ID and image ID as the output MUST have
+   an epoch smaller than the output epoch. Epoch numbers in different domains
+   MUST NOT be compared. A writer MUST NOT manufacture an epoch for a source
+   format that does not define one.
+5. Writers MUST produce a deterministic reference order, sorted by repository
+   ID, image digest, epoch number and layout digest. Readers MUST NOT use array
+   order to select chunk ranges or resolve conflicts.
+
+### Repacking
+
+`references` describes the image's build sources. A repack of that image MUST
+carry this array forward unchanged while allocating a new output epoch and
+writing a new map. Moving the same data MUST NOT rewrite the recorded source
+epoch to that source image's current epoch.
+
+A rebuild is a new construction operation and MAY record different actual
+sources even if its content manifest and image ID are identical. It still
+allocates a fresh output epoch in that domain.
+
+The copied array is provenance. It is not an assertion that the current layout
+still uses a particular source pack. The layout's map and pack descriptors
+define the current physical dependencies.
+
+### Reading and garbage collection
+
+An image is self-contained with respect to its logical description and layout:
+readers MUST NOT require fetching source manifests, source layouts or parent
+chains to reconstruct it. Reference metadata is validated locally; the source
+objects MAY have been retired or removed after the build completed.
+
+References MUST NOT implicitly keep an entire source epoch, its maps or its
+packs alive. They are not additional OCI layers or GC roots. Explicit pins,
+active and retained output epochs, and in-progress operations determine object
+lifetime. An implementation MAY keep source metadata separately for audit.
+
+For every active or retained output epoch, GC MUST preserve its content
+manifest, content config and index, as well as the layout manifest, layout
+config, pack map and referenced packs. The layout's `subject` is not sufficient
+to establish retention of its content manifest; the repository MUST maintain
+an explicit root or equivalent protection for that content manifest and its
+blobs. This does not make source entries in `references` GC roots.
+
+GC MUST use the remaining layouts' actual pack-map ranges when deciding which
+data is live. The reference graph alone does not identify the reused subset.
+A source epoch can be removed while an output continues to use shared packs;
+those packs MUST remain until all physical references and holds are gone.
+
+Publication MUST coordinate the output's physical references with GC. A saved
+reference record does not itself protect a source pack during a build. Before
+publishing the output layout, its dependencies MUST be present and protected;
+stale locations require rebasing, copying data or aborting the publication.
+
+When given a raw file and an index, a writer MUST verify the file size and every
+raw chunk against that index, including zero, repeated and reused chunks.
+Reading source metadata does not verify the compressed source frames. A
+publisher MUST verify each reused chunk range against its indexed chunk ID,
+or rely on an already verified source layout in a trusted immutable store.
+Checking that a pack exists is not evidence of its integrity or its map binding.
+The reference writer prepares a layout but does not publish it to a remote
+repository or fetch the reused packs; these checks remain the publisher's duty.
+
+## Binary objects
+
+All integers in binary objects are little-endian.
 
 ### Index
 
@@ -162,29 +312,10 @@ Field | Description
 - Entries of chunks with the same chunk ID MUST be identical: a chunk is stored
   once per image, and a reader fetches it once and writes it at every offset.
 
-### Manifest
-
-Media type `application/vnd.oci.image.manifest.v1+json`:
-
-- `schemaVersion` is `2`, `mediaType` is the manifest media type, and
-  `artifactType` is `application/vnd.exordos.disk.v1`.
-- `config` is the descriptor of the config.
-- `layers[0]` is the index, `layers[1]` is the pack map, and `layers[2..]` are
-  packs. Each descriptor has the media type of its object.
-- Every pack that the pack map refers to is listed, and no other pack is. A
-  pack is listed once. This keeps registry garbage collection exact: deleting
-  the manifest of a version releases the packs only that version used.
-- Annotations are optional, except `com.exordos.disk.blobs` in static
-  repositories. Writers SHOULD set `org.opencontainers.image.title` to the image
-  name and `org.opencontainers.image.version` to the version of the element the
-  image belongs to. Readers MUST NOT depend on them.
-
-Digests in descriptors are `sha256:<64 lowercase hex digits>`.
-
 ## Reading
 
-A reader receives a manifest and can fetch blobs by digest, and byte ranges of
-blobs. It writes the raw image to a target: a block device or a file.
+A reader receives a layout manifest and can fetch content and other blobs by
+digest, and byte ranges of packs. It writes the raw image to a target: a block device or a file.
 
 ### Rules
 
@@ -194,14 +325,16 @@ target**. Each rule has an error code, which the
 
 Code | Rule
 --- | ---
-`not-a-disk-image` | The manifest is a JSON object with `schemaVersion` 2, the manifest `mediaType` and the disk `artifactType`. Annotation values are strings
-`bad-layers` | `config`, `layers[0]`, `layers[1]` and `layers[2..]` are descriptors with the media types above. At least two layers. No pack is listed twice. Every listed pack is referenced by the pack map
+`not-a-disk-image` | The manifest is a JSON object with `schemaVersion` 2, the manifest `mediaType` and the appropriate content or layout `artifactType`. Layout annotation values are strings
+`bad-layers` | Layout config, subject, index, map and packs have the descriptor types above; content has exactly one index layer. No pack is listed twice. Every listed pack is referenced by the pack map
 `blob-mismatch` | Every fetched blob has the size and the digest of its descriptor
 `unsupported-version` | `formatVersion` is an integer the reader supports
-`bad-config` | The config has all fields with the types above, a known `digest` and `compression`
+`bad-config` | The content config has the fields and types above, a known chunk digest algorithm and no compression field
+`bad-layout` | The layout config has a canonical repository UUID, a SHA-256 image ID, an integer epoch in range and `zstd` compression
+`bad-references` | The references array satisfies the source-reference rules above
 `bad-index` | The index has the headers, entry layout, tail and increasing ends described above. `0 < min <= avg <= max`, and no chunk is longer than `max`
 `bad-packmap` | The pack map decompresses, has the magic, `reserved` = 0 and `entry_count` entries. A zero entry has `length` and `offset` 0. Any other entry has `2 <= layer < len(layers)`, `length > 0` and `offset + length` within the size of the pack descriptor. Entries of the same chunk ID are identical
-`inconsistent` | Config and index agree on the digest and the chunk sizes. The last index end equals `config.size` (0 without chunks). The pack map has one entry per index entry
+`inconsistent` | Layout, subject and content index descriptors agree; the content config and index agree on the digest and chunk sizes. The last index end equals `config.size` (0 without chunks). The pack map has one entry per index entry
 `chunk-mismatch` | Every zero entry belongs to a chunk whose ID is the ID of that many zero bytes
 
 A reader MUST verify every data chunk before it writes it to the target:
@@ -239,8 +372,8 @@ or read from a filesystem:
 <repository>/<element>/<version>/images/<name>.oci.json    manifest of the chunked image
 ```
 
-- The manifest is stored as the sidecar `<name>.oci.json`. A reader given the
-  location of `<name>.raw.zst` finds it by replacing the suffix.
+- The current layout manifest is stored as the sidecar `<name>.oci.json`.
+  A reader given the location of `<name>.raw.zst` finds it by replacing the suffix.
 - The annotation `com.exordos.disk.blobs` is REQUIRED. It is a URI reference to
   the blob directory, ending with `/`, relative to the manifest URL
   (`../../../blobs/` in the layout above). A reader resolves it with
@@ -256,12 +389,32 @@ or read from a filesystem:
 
 - An image is stored under the repository `<namespace>/<image name>`, tagged
   with the element version where `+` is replaced by `_`.
-- It is referenced as `oci://<registry>/<repository>@sha256:<manifest digest>`
+- The content image is referenced as `oci://<registry>/<repository>@sha256:<content manifest digest>`
   (`oci+http://` without TLS). A reader MUST verify the manifest against that
   digest.
 - A reader uses `GET /v2/<repository>/manifests/<reference>` and
   `GET /v2/<repository>/blobs/<digest>` with `Range`. The registry MUST support
   `Range` on blob `GET`, which the distribution specification only recommends.
+
+The static sidecar is the current layout snapshot. It contains the repository
+ID, image ID and epoch through its verified config; no parent traversal is
+required. A reader with an expected image or repository ID MUST compare them
+before writing. A refreshed layout MUST preserve the expected image ID.
+
+All immutable objects, including content manifests and layout snapshots, are
+stored by digest. Static layout annotations locate the blob directory; content
+manifests contain no transport annotations. Layout digests in source references
+cover the exact bytes of the source snapshot, including its annotations.
+
+For OCI, content and layout manifests are separate objects. A repository-managed
+tag derived from the image ID selects the current layout; retained epochs have
+explicit roots. The subject association alone is not a retention policy. The
+registry binding does not implement publication, epoch allocation or GC.
+
+The writer requires an explicit persistent repository UUID and an epoch supplied
+by the repository manager. It does not allocate epochs or lock a remote
+repository. Publication MUST serialize allocation and coordinate physical holds
+with GC. Reusing an output epoch for different layout bytes is forbidden.
 
 ## Conformance vectors
 
@@ -274,4 +427,4 @@ Matching the error codes is recommended but not required.
 
 ## Changes
 
-- Version 1: initial version.
+- Version 1: content identity, layout epochs, source references, packs and pack maps.

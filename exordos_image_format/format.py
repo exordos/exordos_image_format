@@ -25,12 +25,15 @@ import json
 import re
 import struct
 import typing as tp
+import uuid
 
 FORMAT_VERSION = 1
 
 MEDIA_TYPE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 ARTIFACT_TYPE = "application/vnd.exordos.disk.v1"
 MEDIA_TYPE_CONFIG = "application/vnd.exordos.disk.config.v1+json"
+CONTENT_ARTIFACT_TYPE = "application/vnd.exordos.disk.content.v1"
+MEDIA_TYPE_CONTENT_CONFIG = "application/vnd.exordos.disk.content.config.v1+json"
 MEDIA_TYPE_INDEX = "application/vnd.exordos.disk.index.v1"
 MEDIA_TYPE_PACKMAP = "application/vnd.exordos.disk.packmap.v1+zstd"
 MEDIA_TYPE_PACK = "application/vnd.exordos.disk.pack.v1"
@@ -102,8 +105,16 @@ class Config:
     size: int
     chunking: tuple[int, int, int]
     digest: str
-    compression: str = "zstd"
     format_version: int = FORMAT_VERSION
+
+
+@dataclasses.dataclass(frozen=True)
+class LayoutConfig:
+    repository_id: str
+    image: str
+    epoch: int
+    references: tuple[dict, ...] = ()
+    compression: str = "zstd"
 
 
 class Entry(tp.NamedTuple):
@@ -201,7 +212,6 @@ def decode_config(data: bytes) -> Config:
             size=raw["size"],
             chunking=(chunking["min"], chunking["avg"], chunking["max"]),
             digest=raw["digest"],
-            compression=raw["compression"],
         )
     except (ValueError, KeyError, TypeError) as e:
         raise FormatError("bad-config", f"invalid config: {e!r}") from None
@@ -209,8 +219,8 @@ def decode_config(data: bytes) -> Config:
         raise FormatError("bad-config", "sizes must be non-negative integers")
     if config.digest not in DIGESTS:
         raise FormatError("bad-config", f"unknown digest {config.digest!r}")
-    if config.compression != "zstd":
-        raise FormatError("bad-config", f"unknown compression {config.compression!r}")
+    if "compression" in raw:
+        raise FormatError("bad-config", "compression belongs to the layout")
     return config
 
 
@@ -221,10 +231,102 @@ def encode_config(config: Config) -> bytes:
             "size": config.size,
             "chunking": dict(zip(("min", "avg", "max"), config.chunking)),
             "digest": config.digest,
-            "compression": config.compression,
         },
         sort_keys=True,
     ).encode()
+
+
+def _repository_id(value: tp.Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def _epoch(value: tp.Any) -> bool:
+    return type(value) is int and 0 < value < 2**64
+
+
+def decode_layout_config(data: bytes) -> LayoutConfig:
+    try:
+        raw = json.loads(data)
+        version = raw["formatVersion"]
+        if type(version) is not int or version != FORMAT_VERSION:
+            raise FormatError("unsupported-version", f"format version {version}")
+        config = LayoutConfig(
+            raw["repositoryId"],
+            raw["image"],
+            raw["epoch"],
+            compression=raw["compression"],
+        )
+    except (ValueError, KeyError, TypeError) as e:
+        raise FormatError("bad-layout", f"invalid layout config: {e!r}") from None
+    if (
+        not _repository_id(config.repository_id)
+        or not _epoch(config.epoch)
+        or not isinstance(config.image, str)
+        or not _DIGEST_RE.fullmatch(config.image)
+        or config.compression != "zstd"
+    ):
+        raise FormatError(
+            "bad-layout", "invalid repository, image, epoch or compression"
+        )
+    references = raw.get("references")
+    if not isinstance(references, list):
+        raise FormatError("bad-references", "references must be an array")
+    domains, layouts, images = {}, {}, {}
+    for ref in references:
+        if (
+            not isinstance(ref, dict)
+            or not _repository_id(ref.get("repositoryId"))
+            or not _epoch(ref.get("epoch"))
+        ):
+            raise FormatError("bad-references", "invalid source repository or epoch")
+        for name in ("image", "layout"):
+            _check_descriptor(
+                ref.get(name), MEDIA_TYPE_MANIFEST, name, code="bad-references"
+            )
+            if not ref[name]["size"]:
+                raise FormatError(
+                    "bad-references", "source descriptors must not be empty"
+                )
+        domain = (ref["repositoryId"], ref["image"]["digest"], ref["epoch"])
+        if domain in domains:
+            raise FormatError("bad-references", "duplicate or conflicting source epoch")
+        domains[domain] = ref["layout"]["digest"]
+        image = ref["image"]
+        if images.setdefault(image["digest"], image["size"]) != image["size"]:
+            raise FormatError("bad-references", "conflicting content descriptor sizes")
+        layout = ref["layout"]
+        binding = (*domain, layout["size"])
+        if layouts.setdefault(layout["digest"], binding) != binding:
+            raise FormatError("bad-references", "conflicting layout identity")
+        if (
+            domain[:2] == (config.repository_id, config.image)
+            and ref["epoch"] >= config.epoch
+        ):
+            raise FormatError(
+                "bad-references", "a source epoch must precede the output"
+            )
+    return dataclasses.replace(config, references=tuple(references))
+
+
+def encode_layout_config(config: LayoutConfig) -> bytes:
+    data = json.dumps(
+        dict(
+            formatVersion=FORMAT_VERSION,
+            repositoryId=config.repository_id,
+            image=config.image,
+            epoch=config.epoch,
+            compression=config.compression,
+            references=list(config.references),
+        ),
+        sort_keys=True,
+    ).encode()
+    decode_layout_config(data)
+    return data
 
 
 def decode_packmap(data: bytes) -> list[Entry]:
@@ -268,7 +370,9 @@ def decode_chunk(chunk: Chunk, digest: str, data: bytes) -> bytes:
     return out
 
 
-def _check_descriptor(desc: tp.Any, media_type: str, what: str) -> None:
+def _check_descriptor(
+    desc: tp.Any, media_type: str, what: str, code: str = "bad-layers"
+) -> None:
     if (
         not isinstance(desc, dict)
         or desc.get("mediaType") != media_type
@@ -277,22 +381,41 @@ def _check_descriptor(desc: tp.Any, media_type: str, what: str) -> None:
         or type(desc.get("size")) is not int
         or desc["size"] < 0
     ):
-        raise FormatError("bad-layers", f"{what} is not a {media_type} descriptor")
+        raise FormatError(code, f"{what} is not a {media_type} descriptor")
 
 
-def decode_manifest(data: bytes) -> dict:
+def _manifest_header(data: bytes, artifact_type: str) -> dict:
     try:
         manifest = json.loads(data)
     except ValueError as e:
         raise FormatError("not-a-disk-image", f"manifest is not JSON: {e}") from None
     if (
         not isinstance(manifest, dict)
+        or type(manifest.get("schemaVersion")) is not int
         or manifest.get("schemaVersion") != 2
         or manifest.get("mediaType") != MEDIA_TYPE_MANIFEST
-        or manifest.get("artifactType") != ARTIFACT_TYPE
+        or manifest.get("artifactType") != artifact_type
     ):
         raise FormatError("not-a-disk-image", "not a disk image manifest")
+    return manifest
+
+
+def decode_content_manifest(data: bytes) -> dict:
+    manifest = _manifest_header(data, CONTENT_ARTIFACT_TYPE)
+    _check_descriptor(
+        manifest.get("config"), MEDIA_TYPE_CONTENT_CONFIG, "content config"
+    )
+    layers = manifest.get("layers")
+    if not isinstance(layers, list) or len(layers) != 1:
+        raise FormatError("bad-layers", "content must contain only the index")
+    _check_descriptor(layers[0], MEDIA_TYPE_INDEX, "content index")
+    return manifest
+
+
+def decode_manifest(data: bytes) -> dict:
+    manifest = _manifest_header(data, ARTIFACT_TYPE)
     _check_descriptor(manifest.get("config"), MEDIA_TYPE_CONFIG, "config")
+    _check_descriptor(manifest.get("subject"), MEDIA_TYPE_MANIFEST, "content manifest")
     layers = manifest.get("layers")
     if not isinstance(layers, list) or len(layers) < FIRST_PACK_LAYER:
         raise FormatError("bad-layers", "the index and the pack map are required")
@@ -319,6 +442,19 @@ class Image:
     config: Config
     index: Index
     entries: tuple[Entry, ...]
+    layout: LayoutConfig
+    content_manifest: dict
+    content_descriptor: dict
+    layout_descriptor: dict
+
+    @property
+    def reference(self) -> dict:
+        return dict(
+            repositoryId=self.layout.repository_id,
+            image=dict(self.content_descriptor),
+            epoch=self.layout.epoch,
+            layout=dict(self.layout_descriptor),
+        )
 
     @property
     def layers(self) -> list[dict]:
@@ -345,7 +481,21 @@ def load_image(manifest_data: bytes, get_blob: abc.Callable[[str], bytes]) -> Im
     def blob(desc: dict) -> bytes:
         return verify_blob(desc, get_blob(desc["digest"]))
 
-    config = decode_config(blob(manifest["config"]))
+    layout = decode_layout_config(blob(manifest["config"]))
+    content_data = blob(manifest["subject"])
+    content = decode_content_manifest(content_data)
+    if (
+        layout.image != manifest["subject"]["digest"]
+        or layers[INDEX_LAYER] != content["layers"][0]
+    ):
+        raise FormatError("inconsistent", "layout and content identity disagree")
+    for ref in layout.references:
+        if (
+            ref["image"]["digest"] == manifest["subject"]["digest"]
+            and ref["image"]["size"] != manifest["subject"]["size"]
+        ):
+            raise FormatError("bad-references", "conflicting output content size")
+    config = decode_config(blob(content["config"]))
     index = decode_index(blob(layers[INDEX_LAYER]))
     entries = decode_packmap(blob(layers[PACKMAP_LAYER]))
 
@@ -383,7 +533,16 @@ def load_image(manifest_data: bytes, get_blob: abc.Callable[[str], bytes]) -> Im
     if len(used) != len(layers) - FIRST_PACK_LAYER:
         raise FormatError("bad-layers", "a listed pack is not referenced")
 
-    return Image(manifest, config, index, tuple(entries))
+    return Image(
+        manifest,
+        config,
+        index,
+        tuple(entries),
+        layout,
+        content,
+        descriptor(MEDIA_TYPE_MANIFEST, content_data),
+        descriptor(MEDIA_TYPE_MANIFEST, manifest_data),
+    )
 
 
 def build_manifest(
@@ -392,12 +551,14 @@ def build_manifest(
     packmap: bytes,
     packs: abc.Sequence[dict],
     annotations: dict[str, str],
+    content: bytes,
 ) -> dict:
     return {
         "schemaVersion": 2,
         "mediaType": MEDIA_TYPE_MANIFEST,
         "artifactType": ARTIFACT_TYPE,
         "config": descriptor(MEDIA_TYPE_CONFIG, config),
+        "subject": descriptor(MEDIA_TYPE_MANIFEST, content),
         "layers": [
             descriptor(MEDIA_TYPE_INDEX, index),
             descriptor(MEDIA_TYPE_PACKMAP, packmap),
@@ -405,3 +566,13 @@ def build_manifest(
         ],
         "annotations": annotations,
     }
+
+
+def build_content_manifest(config: bytes, index: bytes) -> dict:
+    return dict(
+        schemaVersion=2,
+        mediaType=MEDIA_TYPE_MANIFEST,
+        artifactType=CONTENT_ARTIFACT_TYPE,
+        config=descriptor(MEDIA_TYPE_CONTENT_CONFIG, config),
+        layers=[descriptor(MEDIA_TYPE_INDEX, index)],
+    )

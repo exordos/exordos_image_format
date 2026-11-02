@@ -104,7 +104,47 @@
       "sidecar": "repo/config-compression/1.0.0/images/disk.oci.json",
       "valid": false,
       "stage": "load",
-      "error": "bad-config"
+      "error": "bad-layout"
+    },
+    {
+      "name": "layout-epoch",
+      "description": "A non-integer epoch",
+      "sidecar": "repo/layout-epoch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-layout"
+    },
+    {
+      "name": "layout-repository",
+      "description": "A non-canonical repository ID",
+      "sidecar": "repo/layout-repository/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-layout"
+    },
+    {
+      "name": "references-duplicate",
+      "description": "A repeated source epoch",
+      "sidecar": "repo/references-duplicate/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "bad-references"
+    },
+    {
+      "name": "content-id-mismatch",
+      "description": "Layout image ID differs from its subject",
+      "sidecar": "repo/content-id-mismatch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
+    },
+    {
+      "name": "content-index-mismatch",
+      "description": "Layout index differs from the content index",
+      "sidecar": "repo/content-index-mismatch/1.0.0/images/disk.oci.json",
+      "valid": false,
+      "stage": "load",
+      "error": "inconsistent"
     },
     {
       "name": "chunking-mismatch",

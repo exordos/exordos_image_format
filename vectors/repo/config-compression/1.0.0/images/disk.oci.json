@@ -4,8 +4,13 @@
   "artifactType": "application/vnd.exordos.disk.v1",
   "config": {
     "mediaType": "application/vnd.exordos.disk.config.v1+json",
-    "digest": "sha256:73166f7e67bab5566382f4c38c293cad0b068e1504e812d862c85e3743b67209",
-    "size": 135
+    "digest": "sha256:75ad885f37d8579e6c8dd476a5ff3ea350d7439fccd28521c9f26b48bee499bc",
+    "size": 211
+  },
+  "subject": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:1c768a5adb6e96806e80be7554539ea329d81c2e8740ed0bacd8b0a6491322a7",
+    "size": 482
   },
   "layers": [
     {

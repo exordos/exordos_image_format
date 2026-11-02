@@ -39,6 +39,7 @@ from exordos_image_format import writer  # noqa: E402
 VECTORS = pathlib.Path(__file__).resolve().parent
 # Small packs, so that images have several of them
 PACK_SIZE = 64 << 10
+REPOSITORY_ID = "72f39208-1bb8-4d20-b87d-2058ee1e7619"
 SIDECAR = "{case}/1.0.0/images/disk.oci.json"
 
 
@@ -92,8 +93,13 @@ class Generator:
                 path,
                 index,
                 self.blobs,
-                references,
-                {fmt.TITLE_ANNOTATION: "disk", fmt.VERSION_ANNOTATION: case},
+                repository_id=REPOSITORY_ID,
+                epoch=1,
+                references=references,
+                annotations={
+                    fmt.TITLE_ANNOTATION: "disk",
+                    fmt.VERSION_ANNOTATION: case,
+                },
                 pack_size=PACK_SIZE,
             )
         writer.write_sidecar(manifest, self.sidecar(case), self.blobs)
@@ -161,18 +167,38 @@ def generate(out: pathlib.Path) -> None:
 
     base = v1.manifest
     config = json.loads(fmt.encode_config(v1.config))
+    layout_config = json.loads(fmt.encode_layout_config(v1.layout))
     index = fmt.encode_index(v1.index)
     entries = list(v1.entries)
 
+    def bind_content(m: dict, content: dict) -> dict:
+        data = json.dumps(content, sort_keys=True).encode()
+        m["subject"] = g.blobs.put(fmt.MEDIA_TYPE_MANIFEST, data)
+        changed_layout = {**layout_config, "image": m["subject"]["digest"]}
+        m["config"] = g.put(m["config"], json.dumps(changed_layout).encode())
+        return m
+
     def with_config(**changes: object) -> dict:
         m = copy.deepcopy(base)
-        m["config"] = g.put(m["config"], json.dumps({**config, **changes}).encode())
+        content = copy.deepcopy(v1.content_manifest)
+        content["config"] = g.put(
+            content["config"], json.dumps({**config, **changes}).encode()
+        )
+        return bind_content(m, content)
+
+    def with_layout_config(**changes: object) -> dict:
+        m = copy.deepcopy(base)
+        m["config"] = g.put(
+            m["config"], json.dumps({**layout_config, **changes}).encode()
+        )
         return m
 
     def with_index(data: bytes) -> dict:
         m = copy.deepcopy(base)
         m["layers"][fmt.INDEX_LAYER] = g.put(m["layers"][fmt.INDEX_LAYER], data)
-        return m
+        content = copy.deepcopy(v1.content_manifest)
+        content["layers"][0] = m["layers"][fmt.INDEX_LAYER]
+        return bind_content(m, content)
 
     def with_packmap(data: bytes) -> dict:
         m = copy.deepcopy(base)
@@ -226,13 +252,13 @@ def generate(out: pathlib.Path) -> None:
         m,
     )
     m = copy.deepcopy(base)
-    m["layers"][fmt.INDEX_LAYER]["digest"] = fmt.blob_digest(b"")
+    m["subject"]["digest"] = fmt.blob_digest(b"")
     g.invalid(
         "blob-digest", "blob-mismatch", "load", "Blob does not match the digest", m
     )
     # The file is named by the digest of other content
     g.repo.joinpath("blobs", repository.blob_relpath(fmt.blob_digest(b""))).write_bytes(
-        index
+        json.dumps(v1.content_manifest, sort_keys=True).encode()
     )
 
     g.invalid(
@@ -251,10 +277,47 @@ def generate(out: pathlib.Path) -> None:
     )
     g.invalid(
         "config-compression",
-        "bad-config",
+        "bad-layout",
         "load",
         "Unknown compression",
-        with_config(compression="xz"),
+        with_layout_config(compression="xz"),
+    )
+    g.invalid(
+        "layout-epoch",
+        "bad-layout",
+        "load",
+        "A non-integer epoch",
+        with_layout_config(epoch=True),
+    )
+    g.invalid(
+        "layout-repository",
+        "bad-layout",
+        "load",
+        "A non-canonical repository ID",
+        with_layout_config(repositoryId="not-a-uuid"),
+    )
+    g.invalid(
+        "references-duplicate",
+        "bad-references",
+        "load",
+        "A repeated source epoch",
+        with_layout_config(references=[v2.reference, v2.reference]),
+    )
+    g.invalid(
+        "content-id-mismatch",
+        "inconsistent",
+        "load",
+        "Layout image ID differs from its subject",
+        with_layout_config(image="sha256:" + "f" * 64),
+    )
+    m = copy.deepcopy(base)
+    m["layers"][fmt.INDEX_LAYER] = v2.layers[fmt.INDEX_LAYER]
+    g.invalid(
+        "content-index-mismatch",
+        "inconsistent",
+        "load",
+        "Layout index differs from the content index",
+        m,
     )
     g.invalid(
         "chunking-mismatch",

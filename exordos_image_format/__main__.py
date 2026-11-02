@@ -34,7 +34,8 @@ def _check(args: argparse.Namespace) -> None:
     print(
         f"{args.sidecar}: {image.config.size} bytes, {len(image.entries)} chunks "
         f"({zero} zero), {len(image.layers) - fmt.FIRST_PACK_LAYER} packs, "
-        f"{image.config.digest} {':'.join(map(str, image.config.chunking))}"
+        f"{image.config.digest} {':'.join(map(str, image.config.chunking))}, "
+        f"epoch {image.layout.epoch}, {len(image.layout.references)} references"
     )
 
 
@@ -52,7 +53,15 @@ def _build(args: argparse.Namespace) -> None:
     if args.version:
         annotations[fmt.VERSION_ANNOTATION] = args.version
     blobs = writer.BlobDir(args.blobs)
-    manifest = writer.build(args.raw, index, blobs, references, annotations)
+    manifest = writer.build(
+        args.raw,
+        index,
+        blobs,
+        repository_id=args.repository_id,
+        epoch=args.epoch,
+        references=references,
+        annotations=annotations,
+    )
     writer.write_sidecar(manifest, args.sidecar, blobs)
 
 
@@ -74,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("raw", type=pathlib.Path)
     build.add_argument("sidecar", type=pathlib.Path)
     build.add_argument("--blobs", type=pathlib.Path, required=True)
+    build.add_argument(
+        "--repository-id", required=True, help="persistent repository UUID"
+    )
+    build.add_argument(
+        "--epoch", required=True, type=int, help="new layout epoch number"
+    )
     build.add_argument(
         "--index", type=pathlib.Path, help=".caibx of the raw image (default: desync)"
     )

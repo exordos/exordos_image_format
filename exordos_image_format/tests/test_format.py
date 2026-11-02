@@ -29,6 +29,7 @@ from exordos_image_format import repository
 from exordos_image_format import writer
 
 VECTORS = pathlib.Path(__file__).resolve().parents[2] / "vectors"
+REPOSITORY_ID = "72f39208-1bb8-4d20-b87d-2058ee1e7619"
 
 
 def _image(name: str) -> tuple[fmt.Image, repository.StaticSource]:
@@ -88,7 +89,9 @@ def test_build_reference_adds_no_packs(tmp_path: pathlib.Path) -> None:
     index = source.blob(v1.layers[fmt.INDEX_LAYER]["digest"])
 
     blobs = writer.BlobDir(tmp_path / "blobs")
-    manifest = writer.build(raw, index, blobs, [v1])
+    manifest = writer.build(
+        raw, index, blobs, repository_id=REPOSITORY_ID, epoch=2, references=[v1]
+    )
 
     assert (
         manifest["layers"][fmt.FIRST_PACK_LAYER :] == v1.layers[fmt.FIRST_PACK_LAYER :]
@@ -108,7 +111,13 @@ def test_build_and_extract(tmp_path: pathlib.Path) -> None:
 
     blobs = writer.BlobDir(tmp_path / "repo" / "blobs")
     sidecar = tmp_path / "repo" / "disk" / "1" / "images" / "disk.oci.json"
-    writer.write_sidecar(writer.build(raw, index, blobs, pack_size=1), sidecar, blobs)
+    writer.write_sidecar(
+        writer.build(
+            raw, index, blobs, repository_id=REPOSITORY_ID, epoch=1, pack_size=1
+        ),
+        sidecar,
+        blobs,
+    )
 
     image, source = repository.open_image(str(sidecar))
     assert image.annotations[fmt.BLOBS_ANNOTATION] == "../../../blobs/"

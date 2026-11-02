@@ -1,8 +1,8 @@
 # exordos_image_format
 
 The format in which Exordos ships node disk images: the disk is cut into
-chunks, chunks are packed into large immutable files, and a small OCI manifest
-says how to put the disk back together.
+chunks, chunks are packed into large immutable files, and OCI manifests
+describe the content and its current layout.
 
 ## Why
 
@@ -64,8 +64,11 @@ running node's disk no longer does.
 
 ```mermaid
 flowchart LR
-    M["manifest<br/>disk.oci.json"]
-    M --> C["config<br/>size, chunking"]
+    M["layout manifest<br/>disk.oci.json"]
+    M --> LC["layout config<br/>repository, epoch, references"]
+    M --> CM["content manifest<br/>stable image ID"]
+    CM --> C["content config<br/>size, chunking"]
+    CM --> I
     M --> I["index<br/>chunk i: end, ID"]
     M --> PM["pack map<br/>chunk i: pack, offset, length"]
     M --> P["packs<br/>~32 MiB each"]
@@ -80,8 +83,10 @@ flowchart LR
   and are shared between images.
 - **Pack map**: for each chunk, where it is: a byte range in a pack, or
   "zeros", stored nowhere.
-- **Config** and **manifest**: image size, chunking parameters, and the list of
-  all objects with their digests.
+- **Content config and manifest**: size and chunking parameters; the manifest
+  digest is the image ID and remains unchanged when data is repacked.
+- **Layout config and manifest**: repository UUID, epoch, exact source image
+  and layout descriptors, and the objects needed to assemble this placement.
 
 On the disk:
 
@@ -122,6 +127,12 @@ are, and only new ones go into new packs. A cache in front of the repository
 already holds packs A and B and fetches only D. C stays for as long as build
 N is published.
 
+Only sources that contribute chunks are recorded in `references`. Each record
+identifies the source repository, content manifest, epoch and exact layout
+manifest. These records describe build provenance; reading an image uses its
+own complete map and does not fetch its parents. Repacking preserves the
+records while creating a new layout epoch of the same content image.
+
 ### A flash
 
 ```mermaid
@@ -130,7 +141,7 @@ sequenceDiagram
     participant R as repository or cache
     participant D as node disk
     S->>R: GET disk.oci.json
-    S->>R: GET config, index, pack map
+    S->>R: GET content manifest, configs, index, pack map
     Note over S: check digests and every rule of the spec<br/>before touching the disk
     par in parallel
         S->>R: GET pack, Range: bytes=…
@@ -194,10 +205,21 @@ python3.14 -m exordos_image_format extract <sidecar> <target>
 
 # Build an image into a static repository, reusing the packs of references
 python3.14 -m exordos_image_format build disk.raw repo/disk/1.0.0/images/disk.oci.json \
-    --blobs repo/blobs [--reference <sidecar>]... [--title disk --version 1.0.0]
+    --blobs repo/blobs --repository-id 72f39208-1bb8-4d20-b87d-2058ee1e7619 \
+    --epoch 1 [--reference <sidecar>]... [--title disk --version 1.0.0]
 ```
 
 `build` chunks the image with `desync` unless `--index` gives a `.caibx`.
+The repository UUID must remain stable. The caller allocates a new epoch for
+each layout of a given image; this library does not maintain that counter or
+coordinate publication with GC. References pin the exact snapshots loaded by
+the build, including their source epochs. The writer does not fetch reused
+packs: references must share the blob store, or the publisher must copy the
+missing dependencies before exposing the sidecar.
+Loading a reference validates its metadata, not its compressed frames. Publish
+only after `check --chunks` succeeds on the completed output, or reuse an
+already verified layout from a trusted immutable store. Build output alone is
+not a publication check for missing or corrupt source packs.
 
 Modules:
 

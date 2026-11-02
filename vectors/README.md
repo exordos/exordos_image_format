@@ -27,7 +27,12 @@ Case | Stage | Error | Description
 `blob-digest` | load | `blob-mismatch` | Blob does not match the digest
 `format-version` | load | `unsupported-version` | formatVersion 2
 `config-digest` | load | `bad-config` | Unknown digest
-`config-compression` | load | `bad-config` | Unknown compression
+`config-compression` | load | `bad-layout` | Unknown layout compression
+`layout-epoch` | load | `bad-layout` | A boolean instead of an integer epoch
+`layout-repository` | load | `bad-layout` | A non-canonical repository UUID
+`references-duplicate` | load | `bad-references` | A repeated source epoch
+`content-id-mismatch` | load | `inconsistent` | Layout image ID differs from its subject
+`content-index-mismatch` | load | `inconsistent` | Layout index differs from the content index
 `chunking-mismatch` | load | `inconsistent` | Config and index chunk sizes differ
 `digest-mismatch` | load | `inconsistent` | Config and index digests differ
 `size-mismatch` | load | `inconsistent` | config.size is not the end of the last chunk
@@ -64,3 +69,7 @@ python3.14 vectors/generate.py
 Requires `desync` in `PATH`. The raw images are generated from fixed seeds and
 `cases.json` is reproducible. Blob digests depend on the zstd library version,
 so regeneration may change the blobs; commit them together with `cases.json`.
+
+The valid `v2` case means the second release of the fixture image, not format
+version 2. All vectors use format version 1. Its layout records the exact
+content and layout descriptors of the `v1` source and its repository epoch.
